@@ -150,6 +150,10 @@ func reconciliationLoop(
 		noTrackHostPorts: make(noTrackHostPortsByPod),
 	}
 
+	// Track the last successfully reconciled state to avoid unnecessary reconciliations
+	// during periodic checks. This may prevent disrupting connections when nothing has changed.
+	var lastReconciledState *desiredState
+
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
@@ -350,6 +354,15 @@ stop:
 			}
 
 		case <-refresher.C():
+			// For periodic reconciliation, only trigger if state has actually changed.
+			if lastReconciledState != nil && statesEqual(*lastReconciledState, state) {
+				log.Debug("Skipping periodic reconciliation - state unchanged since last check")
+
+				refresher.Reset(fullReconciliationInterval)
+				continue
+			}
+			// State has changed or this is the first periodic check, proceed with reconciliation
+			log.Info("Periodic reconciliation triggered - state changed or first periodic check")
 			stateChanged = true
 		case <-ticker.C():
 			if !stateChanged {
@@ -366,6 +379,9 @@ stop:
 				health.OK("iptables rules full reconciliation completed")
 				firstInit = false
 				stateChanged = false
+				// Store the current reconciled state for comparison in next check
+				reconciledStateCopy := state
+				lastReconciledState = &reconciledStateCopy
 			}
 
 			// close all channels waiting for reconciliation
@@ -405,4 +421,55 @@ stop:
 	}
 
 	return nil
+}
+
+// statesEqual compares two desiredState structs to determine if they are equivalent
+// for the purpose of periodic reconciliation. Returns true if states are equal.
+func statesEqual(a, b desiredState) bool {
+	// Compare installRules flag
+	if a.installRules != b.installRules {
+		return false
+	}
+
+	// Compare devices
+	if !a.devices.Equal(b.devices) {
+		return false
+	}
+
+	// Compare localNodeInfo
+	if !a.localNodeInfo.equal(b.localNodeInfo) {
+		return false
+	}
+
+	// Compare proxies (map comparison)
+	if len(a.proxies) != len(b.proxies) {
+		return false
+	}
+	for k, v := range a.proxies {
+		if bv, ok := b.proxies[k]; !ok || bv != v {
+			return false
+		}
+	}
+
+	// Compare noTrackPods
+	if !a.noTrackPods.Equal(b.noTrackPods) {
+		return false
+	}
+
+	// Compare noTrackHostPorts
+	if len(a.noTrackHostPorts) != len(b.noTrackHostPorts) {
+		return false
+	}
+	for k, v := range a.noTrackHostPorts {
+		bv, ok := b.noTrackHostPorts[k]
+		if !ok {
+			return false
+		}
+		// Compare sets directly - v and bv are already Set[loadbalancer.L4Addr]
+		if !v.Equal(bv) {
+			return false
+		}
+	}
+
+	return true
 }
