@@ -14,6 +14,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	"github.com/cilium/cilium/pkg/datapath/tables"
+	lb "github.com/cilium/cilium/pkg/loadbalancer"
 	"github.com/cilium/cilium/pkg/logging"
 	"github.com/cilium/cilium/pkg/logging/logfields"
 	"github.com/cilium/cilium/pkg/node"
@@ -24,10 +25,11 @@ import (
 type desiredState struct {
 	installRules bool
 
-	devices       sets.Set[string]
-	localNodeInfo localNodeInfo
-	proxies       map[string]proxyInfo
-	noTrackPods   sets.Set[noTrackPodInfo]
+	devices          sets.Set[string]
+	localNodeInfo    localNodeInfo
+	proxies          map[string]proxyInfo
+	noTrackPods      sets.Set[noTrackPodInfo]
+	noTrackHostPorts map[string]sets.Set[lb.L4Addr]
 }
 
 type localNodeInfo struct {
@@ -136,9 +138,10 @@ func reconciliationLoop(
 	fullLogLimiter := logging.NewLimiter(10*time.Second, 3)
 
 	state := desiredState{
-		installRules: installIptRules,
-		proxies:      make(map[string]proxyInfo),
-		noTrackPods:  sets.New[noTrackPodInfo](),
+		installRules:     installIptRules,
+		proxies:          make(map[string]proxyInfo),
+		noTrackPods:      sets.New[noTrackPodInfo](),
+		noTrackHostPorts: make(map[string]sets.Set[lb.L4Addr]),
 	}
 
 	// Track the last successfully reconciled state to avoid unnecessary reconciliations
