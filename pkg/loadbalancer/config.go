@@ -210,6 +210,12 @@ type UserConfig struct {
 	// thus may need to first reconcile the Kubernetes services to connect to ClusterMesh (if endpoints have changed
 	// while agent was down).
 	InitWaitTimeout time.Duration `mapstructure:"lb-init-wait-timeout"`
+
+	// RefreshInterval is the interval at which frontends are refreshed (re-reconciled) even when they haven't changed.
+	// This is used for eventual consistency to catch any drift between desired state and BPF maps.
+	// Set to 0 to disable periodic refresh (default). With incremental reconciliation and pruning diff system,
+	// periodic refresh is typically unnecessary and can cause connection disruption.
+	RefreshInterval time.Duration `mapstructure:"lb-refresh-interval"`
 }
 
 // ConfigCell provides the [Config] and [ExternalConfig] configurations.
@@ -320,6 +326,9 @@ func (def UserConfig) Flags(flags *pflag.FlagSet) {
 
 	flags.Duration("lb-init-wait-timeout", def.InitWaitTimeout, "Amount of time to wait for initialization before reconciling BPF maps")
 	flags.MarkHidden("lb-init-wait-timeout")
+
+	flags.Duration("lb-refresh-interval", def.RefreshInterval, "Interval for periodic refresh of frontends (0 disables). With incremental reconciliation and pruning diff system, periodic refresh is typically unnecessary and can cause connection disruption.")
+	flags.MarkHidden("lb-refresh-interval")
 }
 
 // NewConfig takes the user-provided configuration, validates and processes it to produce the final
@@ -491,6 +500,10 @@ var DefaultUserConfig = UserConfig{
 	EnableServiceTopology: false,
 
 	InitWaitTimeout: 1 * time.Minute,
+
+	// RefreshInterval defaults to 0 (disabled) to avoid unnecessary reconciliation.
+	// With incremental reconciliation and pruning diff system, periodic refresh is typically unnecessary.
+	RefreshInterval: 0,
 }
 
 var DefaultConfig = Config{

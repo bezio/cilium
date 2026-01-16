@@ -33,6 +33,7 @@ import (
 	"github.com/cilium/cilium/pkg/maglev"
 	"github.com/cilium/cilium/pkg/time"
 	"github.com/cilium/cilium/pkg/u8proto"
+	"golang.org/x/time/rate"
 )
 
 func newBPFReconciler(p reconciler.Params, g job.Group, cfg loadbalancer.Config, ops *BPFOps, fes statedb.Table[*loadbalancer.Frontend], w *writer.Writer) (reconciler.Reconciler[*loadbalancer.Frontend], error) {
@@ -78,6 +79,20 @@ func newBPFReconciler(p reconciler.Params, g job.Group, cfg loadbalancer.Config,
 		reconciler.WithPruning(
 			30*time.Minute,
 		),
+
+		// Configure refresh interval from config. Default is 0 (disabled) to avoid unnecessary
+		// reconciliation. With incremental reconciliation and pruning diff system, periodic
+		// refresh is typically unnecessary and can cause connection disruption.
+		reconciler.WithRefreshing(
+			cfg.RefreshInterval,
+			func() *rate.Limiter {
+				if cfg.RefreshInterval > 0 {
+					// Use default rate limiter: 100 objects per second
+					return rate.NewLimiter(100.0, 1)
+				}
+				return nil
+			}(),
+		),
 	)
 
 	g.Add(
@@ -102,6 +117,15 @@ func newBPFReconciler(p reconciler.Params, g job.Group, cfg loadbalancer.Config,
 					p.Log.Warn("Timed out waiting for load-balancing state to initialize, proceeding with reconciliation")
 				}
 			}
+
+			// Pre-fill lastPrunedRevision with the current frontend table revision after initialization
+			// to avoid unnecessary pruning on the first periodic check if the state hasn't changed.
+			// This prevents disrupting connections when restarting with the same state.
+			txn := p.DB.ReadTxn()
+			ops.mu.Lock()
+			ops.lastPrunedRevision = fes.Revision(txn)
+			ops.mu.Unlock()
+			p.Log.Debug("Pre-filled lastPrunedRevision", "revision", ops.lastPrunedRevision)
 
 			health.OK("Starting")
 			if err := rlc.Start(p.Log, ctx); err != nil {
@@ -245,12 +269,7 @@ func (ops *BPFOps) ResetAndRestore() (err error) {
 	ops.backendReferences = map[loadbalancer.L3n4Addr]sets.Set[loadbalancer.L3n4Addr]{}
 	ops.nodePortAddrByPort = map[nodePortAddrKey][]netip.Addr{}
 	ops.prevSourceRanges = map[loadbalancer.L3n4Addr]sets.Set[netip.Prefix]{}
-
-	// Pre-fill lastPrunedRevision with the current frontend table revision to avoid
-	// unnecessary pruning on the first periodic check if the state hasn't changed.
-	// This prevents disrupting connections when restarting with the same state.
-	txn := ops.db.ReadTxn()
-	ops.lastPrunedRevision = ops.frontends.Revision(txn)
+	ops.lastPrunedRevision = 0
 
 	// Restore backend IDs
 	backendIDToAddress := map[loadbalancer.BackendID]loadbalancer.L3n4Addr{}
@@ -688,9 +707,15 @@ func (ops *BPFOps) Prune(_ context.Context, txn statedb.ReadTxn, _ iter.Seq2[*lo
 	// If not, skip pruning to avoid unnecessary work.
 	currentRevision := ops.frontends.Revision(txn)
 	if currentRevision == ops.lastPrunedRevision {
-		ops.log.Debug("Skipping periodic pruning - frontend table state unchanged since last prune")
+		ops.log.Debug("Skipping periodic pruning - frontend table state unchanged since last prune",
+			"currentRevision", currentRevision,
+			"lastPrunedRevision", ops.lastPrunedRevision)
 		return nil
 	}
+
+	ops.log.Debug("Frontend table revision changed, pruning required",
+		"currentRevision", currentRevision,
+		"lastPrunedRevision", ops.lastPrunedRevision)
 
 	defer func() { ops.pruneCount.Add(1) }()
 	ops.log.Debug("Pruning")

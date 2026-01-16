@@ -359,7 +359,7 @@ func newIptablesManager(p params) datapath.IptablesManager {
 			}
 			return reconciliationLoop(
 				ctx, p.Logger, health,
-				iptMgr.sharedCfg.InstallIptRules, &iptMgr.reconcilerParams,
+				iptMgr.sharedCfg.InstallIptRules, p.Cfg.FullReconciliationInterval, &iptMgr.reconcilerParams,
 				iptMgr.doInstallRules,
 				iptMgr.doInstallProxyRules,
 				iptMgr.installNoTrackRules,

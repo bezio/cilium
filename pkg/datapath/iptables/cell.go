@@ -66,6 +66,12 @@ type Config struct {
 	// EnableXTSocketFallback allows disabling of kernel's ip_early_demux
 	// sysctl option if `xt_socket` kernel module is not available.
 	EnableXTSocketFallback bool
+
+	// FullReconciliationInterval is the interval for periodic full reconciliation of iptables rules.
+	// This is used for eventual consistency to catch any drift between desired state and actual iptables rules.
+	// Set to 0 to disable periodic reconciliation (default). With the diff system, periodic reconciliation
+	// is typically unnecessary and can cause connection disruption.
+	FullReconciliationInterval time.Duration
 }
 
 var defaultConfig = Config{
@@ -74,6 +80,9 @@ var defaultConfig = Config{
 	DisableIptablesFeederRules: []string{},
 	IPTablesRandomFully:        false,
 	EnableXTSocketFallback:     true,
+	// FullReconciliationInterval defaults to 0 (disabled) to avoid unnecessary reconciliation.
+	// With the diff system, periodic reconciliation is typically unnecessary.
+	FullReconciliationInterval: 0,
 }
 
 func (def Config) Flags(flags *pflag.FlagSet) {
@@ -82,6 +91,8 @@ func (def Config) Flags(flags *pflag.FlagSet) {
 	flags.Bool("iptables-random-fully", def.IPTablesRandomFully, "Set iptables flag random-fully on masquerading rules")
 	flags.Bool("prepend-iptables-chains", def.PrependIptablesChains, "Prepend custom iptables chains instead of appending")
 	flags.Bool("enable-xt-socket-fallback", def.EnableXTSocketFallback, "Enable fallback for missing xt_socket module")
+	flags.Duration("iptables-full-reconciliation-interval", def.FullReconciliationInterval, "Interval for periodic full reconciliation of iptables rules (0 disables). With the diff system, periodic reconciliation is typically unnecessary and can cause connection disruption.")
+	flags.MarkHidden("iptables-full-reconciliation-interval")
 }
 
 type SharedConfig struct {
