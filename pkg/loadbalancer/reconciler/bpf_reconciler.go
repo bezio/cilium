@@ -245,7 +245,12 @@ func (ops *BPFOps) ResetAndRestore() (err error) {
 	ops.backendReferences = map[loadbalancer.L3n4Addr]sets.Set[loadbalancer.L3n4Addr]{}
 	ops.nodePortAddrByPort = map[nodePortAddrKey][]netip.Addr{}
 	ops.prevSourceRanges = map[loadbalancer.L3n4Addr]sets.Set[netip.Prefix]{}
-	ops.lastPrunedRevision = 0
+
+	// Pre-fill lastPrunedRevision with the current frontend table revision to avoid
+	// unnecessary pruning on the first periodic check if the state hasn't changed.
+	// This prevents disrupting connections when restarting with the same state.
+	txn := ops.db.ReadTxn()
+	ops.lastPrunedRevision = ops.frontends.Revision(txn)
 
 	// Restore backend IDs
 	backendIDToAddress := map[loadbalancer.BackendID]loadbalancer.L3n4Addr{}

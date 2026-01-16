@@ -124,6 +124,7 @@ func reconciliationLoop(
 	updateProxyRules func(proxyPort uint16, name string) error,
 	installNoTrackRules func(addr netip.Addr, port uint16) error,
 	removeNoTrackRules func(addr netip.Addr, port uint16) error,
+	readCurrentState func() (desiredState, error),
 ) error {
 	// The minimum interval between reconciliation attempts
 	const minReconciliationInterval = 200 * time.Millisecond
@@ -164,6 +165,29 @@ func reconciliationLoop(
 	devices, devicesWatch := tables.SelectedDevices(params.devices, params.db.ReadTxn())
 	state.devices = sets.New(tables.DeviceNames(devices)...)
 
+	// stateChanged is true when the desired state has changed or when reconciling it
+	// has failed. It's set to false when reconciling succeeds or when current state matches.
+	stateChanged := true
+
+	// Try to read the current iptables state and pre-fill lastReconciledState
+	// if it matches the desired state. This avoids disrupting connections on restart
+	// when the state hasn't actually changed.
+	if readCurrentState != nil {
+		if currentState, err := readCurrentState(); err == nil {
+			// Build a state with the same structure as our desired state for comparison
+			currentState.installRules = installIptRules
+			currentState.localNodeInfo = state.localNodeInfo
+			currentState.devices = state.devices
+			if statesEqual(currentState, state) {
+				log.Debug("Current iptables state matches desired state, skipping initial reconciliation")
+				lastReconciledState = &currentState
+				stateChanged = false
+			}
+		} else {
+			log.Debug("Failed to read current iptables state, will perform initial reconciliation", logfields.Error, err)
+		}
+	}
+
 	// Use a ticker to limit how often the desired state is reconciled to avoid doing
 	// lots of operations when e.g. ipset updates.
 	ticker := params.clock.NewTicker(minReconciliationInterval)
@@ -174,21 +198,25 @@ func reconciliationLoop(
 	refresher := params.clock.NewTimer(fullReconciliationInterval)
 	defer refresher.Stop()
 
-	// stateChanged is true when the desired state has changed or when reconciling it
-	// has failed. It's set to false when reconciling succeeds.
-	stateChanged := true
-
 	firstInit := true
 
 	// Run an initial full reconciliation before listening on partial reconciliation
-	// request channels (like proxies and no track rules).
-	if err := updateRules(state, firstInit); err != nil {
-		health.Degraded("iptables rules update failed", err)
-		// Keep stateChanged=true and firstInit=true to try again on the next tick.
+	// request channels (like proxies and no track rules), but only if state has changed.
+	if stateChanged {
+		if err := updateRules(state, firstInit); err != nil {
+			health.Degraded("iptables rules update failed", err)
+			// Keep stateChanged=true and firstInit=true to try again on the next tick.
+		} else {
+			health.OK("iptables rules update completed")
+			firstInit = false
+			stateChanged = false
+			// Store the current reconciled state for comparison in next check
+			reconciledStateCopy := state
+			lastReconciledState = &reconciledStateCopy
+		}
 	} else {
-		health.OK("iptables rules update completed")
+		health.OK("iptables rules already in sync, skipping initial reconciliation")
 		firstInit = false
-		stateChanged = false
 	}
 
 	// list of pending channels waiting for reconciliation

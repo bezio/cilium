@@ -21,6 +21,7 @@ import (
 	"github.com/cilium/statedb"
 	"github.com/mattn/go-shellwords"
 	"github.com/vishvananda/netlink"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/clock"
 
 	"github.com/cilium/cilium/daemon/cmd/cni"
@@ -363,6 +364,7 @@ func newIptablesManager(p params) datapath.IptablesManager {
 				iptMgr.doInstallProxyRules,
 				iptMgr.installNoTrackRules,
 				iptMgr.removeNoTrackRules,
+				iptMgr.readCurrentState,
 			)
 		}),
 	)
@@ -1136,6 +1138,29 @@ func (m *Manager) doGetProxyPorts(prog iptablesInterface) map[string]uint16 {
 		}
 	}
 	return portMap
+}
+
+// readCurrentState reads the current iptables state and returns it as a desiredState.
+// This is used to pre-fill lastReconciledState on startup to avoid unnecessary reconciliations.
+func (m *Manager) readCurrentState() (desiredState, error) {
+	state := desiredState{
+		installRules:     m.sharedCfg.InstallIptRules,
+		proxies:          make(map[string]proxyInfo),
+		noTrackPods:      sets.New[noTrackPodInfo](),
+		noTrackHostPorts: make(map[string]sets.Set[lb.L4Addr]),
+	}
+
+	// Read current proxy ports from iptables
+	proxyPorts := m.GetProxyPorts()
+	for name, port := range proxyPorts {
+		state.proxies[name] = proxyInfo{name: name, port: port}
+	}
+
+	// Note: We don't read noTrackPods or noTrackHostPorts from iptables as it's complex
+	// and these are typically empty on startup. If they're present, the reconciliation
+	// will handle them incrementally.
+
+	return state, nil
 }
 
 func (m *Manager) getDeliveryInterface(ifName string) string {
