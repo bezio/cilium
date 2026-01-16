@@ -120,6 +120,7 @@ type BPFOps struct {
 	log       rateLimitingLogger
 	db        *statedb.DB
 	nodeAddrs statedb.Table[tables.NodeAddress]
+	frontends statedb.Table[*loadbalancer.Frontend]
 
 	cfg           loadbalancer.Config
 	extCfg        loadbalancer.ExternalConfig
@@ -130,6 +131,10 @@ type BPFOps struct {
 	// mu protects the state below. The reconciler itself is single-threaded, but we need
 	// to protect the state in order to be able to ResetAndRestore() in tests.
 	mu lock.Mutex
+
+	// lastPrunedRevision tracks the revision of the frontend table when we last successfully pruned.
+	// This is used to skip pruning if the state hasn't changed since the last prune.
+	lastPrunedRevision statedb.Revision
 
 	serviceIDAlloc     idAllocator[loadbalancer.ServiceID]
 	restoredServiceIDs map[loadbalancer.L3n4Addr]loadbalancer.ServiceID
@@ -189,6 +194,7 @@ type bpfOpsParams struct {
 	Maglev         *maglev.Maglev
 	DB             *statedb.DB
 	NodeAddresses  statedb.Table[tables.NodeAddress]
+	Frontends      statedb.Table[*loadbalancer.Frontend]
 }
 
 const (
@@ -206,6 +212,7 @@ func newBPFOps(p bpfOpsParams) *BPFOps {
 		LBMaps:    p.LBMaps,
 		db:        p.DB,
 		nodeAddrs: p.NodeAddresses,
+		frontends: p.Frontends,
 	}
 	ops.setLastUpdatedAt()
 
@@ -238,6 +245,7 @@ func (ops *BPFOps) ResetAndRestore() (err error) {
 	ops.backendReferences = map[loadbalancer.L3n4Addr]sets.Set[loadbalancer.L3n4Addr]{}
 	ops.nodePortAddrByPort = map[nodePortAddrKey][]netip.Addr{}
 	ops.prevSourceRanges = map[loadbalancer.L3n4Addr]sets.Set[netip.Prefix]{}
+	ops.lastPrunedRevision = 0
 
 	// Restore backend IDs
 	backendIDToAddress := map[loadbalancer.BackendID]loadbalancer.L3n4Addr{}
@@ -667,12 +675,22 @@ func (ops *BPFOps) pruneMaglev() error {
 }
 
 // Prune implements reconciler.Operations.
-func (ops *BPFOps) Prune(_ context.Context, _ statedb.ReadTxn, _ iter.Seq2[*loadbalancer.Frontend, statedb.Revision]) error {
+func (ops *BPFOps) Prune(_ context.Context, txn statedb.ReadTxn, _ iter.Seq2[*loadbalancer.Frontend, statedb.Revision]) error {
 	ops.mu.Lock()
 	defer ops.mu.Unlock()
+
+	// Check if the frontend table revision has changed since the last prune.
+	// If not, skip pruning to avoid unnecessary work.
+	currentRevision := ops.frontends.Revision(txn)
+	if currentRevision == ops.lastPrunedRevision {
+		ops.log.Debug("Skipping periodic pruning - frontend table state unchanged since last prune")
+		return nil
+	}
+
 	defer func() { ops.pruneCount.Add(1) }()
 	ops.log.Debug("Pruning")
-	return errors.Join(
+
+	err := errors.Join(
 		ops.pruneRestoredIDs(),
 		ops.pruneServiceMaps(),
 		ops.pruneBackendMaps(),
@@ -680,6 +698,13 @@ func (ops *BPFOps) Prune(_ context.Context, _ statedb.ReadTxn, _ iter.Seq2[*load
 		ops.pruneSourceRanges(),
 		ops.pruneMaglev(),
 	)
+
+	// Only update lastPrunedRevision if pruning succeeded
+	if err == nil {
+		ops.lastPrunedRevision = currentRevision
+	}
+
+	return err
 }
 
 // Update implements reconciler.Operations.
