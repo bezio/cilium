@@ -66,6 +66,11 @@ type Config struct {
 	// EnableXTSocketFallback allows disabling of kernel's ip_early_demux
 	// sysctl option if `xt_socket` kernel module is not available.
 	EnableXTSocketFallback bool
+
+	// ReconciliationInterval is the interval between consecutive full reconciliations
+	// to ensure eventual consistency and correct possible divergences.
+	// A value of 0 disables periodic reconciliation.
+	ReconciliationInterval time.Duration `mapstructure:"iptables-reconciliation-interval"`
 }
 
 var defaultConfig = Config{
@@ -74,6 +79,7 @@ var defaultConfig = Config{
 	DisableIptablesFeederRules: []string{},
 	IPTablesRandomFully:        false,
 	EnableXTSocketFallback:     true,
+	ReconciliationInterval:     0, // Disabled by default (0 means disabled)
 }
 
 func (def Config) Flags(flags *pflag.FlagSet) {
@@ -82,6 +88,8 @@ func (def Config) Flags(flags *pflag.FlagSet) {
 	flags.Bool("iptables-random-fully", def.IPTablesRandomFully, "Set iptables flag random-fully on masquerading rules")
 	flags.Bool("prepend-iptables-chains", def.PrependIptablesChains, "Prepend custom iptables chains instead of appending")
 	flags.Bool("enable-xt-socket-fallback", def.EnableXTSocketFallback, "Enable fallback for missing xt_socket module")
+	flags.Duration("iptables-reconciliation-interval", def.ReconciliationInterval, "Interval between consecutive full iptables reconciliations. 0 disables periodic reconciliation.")
+	flags.MarkHidden("iptables-reconciliation-interval")
 }
 
 type SharedConfig struct {

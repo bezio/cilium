@@ -12,6 +12,7 @@ import (
 	"github.com/cilium/hive/cell"
 	"github.com/cilium/stream"
 	"k8s.io/apimachinery/pkg/util/sets"
+	"k8s.io/utils/clock"
 
 	"github.com/cilium/cilium/pkg/datapath/tables"
 	"github.com/cilium/cilium/pkg/logging"
@@ -118,6 +119,7 @@ func reconciliationLoop(
 	health cell.Health,
 	installIptRules bool,
 	params *reconcilerParams,
+	reconciliationInterval time.Duration,
 	updateRules func(state desiredState, firstInit bool) error,
 	updateProxyRules func(proxyPort uint16, name string) error,
 	installNoTrackRules func(addr netip.Addr, port uint16) error,
@@ -128,7 +130,8 @@ func reconciliationLoop(
 	// The interval between consecutive reconciliations, in case no other
 	// changes occurred at the same time, to ensure eventual consistency
 	// and correct possible divergences.
-	const fullReconciliationInterval = 30 * time.Minute
+	// A value of 0 means periodic reconciliation is disabled.
+	fullReconciliationInterval := reconciliationInterval
 
 	// log limiter for partial (proxy and no track rules) reconciliation errors
 	partialLogLimiter := logging.NewLimiter(10*time.Second, 3)
@@ -164,8 +167,17 @@ func reconciliationLoop(
 
 	// Refresher is a timer that allows to schedule periodic reconciliations
 	// to ensure eventual consistency and correct possible divergences.
-	refresher := params.clock.NewTimer(fullReconciliationInterval)
-	defer refresher.Stop()
+	// Only create the timer if periodic reconciliation is enabled (interval > 0).
+	var refresher clock.Timer
+	var refresherChan <-chan time.Time
+	if fullReconciliationInterval > 0 {
+		refresher = params.clock.NewTimer(fullReconciliationInterval)
+		defer refresher.Stop()
+		refresherChan = refresher.C()
+	} else {
+		// Use a nil channel which never fires when periodic reconciliation is disabled
+		refresherChan = nil
+	}
 
 	// stateChanged is true when the desired state has changed or when reconciling it
 	// has failed. It's set to false when reconciling succeeds.
@@ -293,7 +305,7 @@ stop:
 			} else {
 				close(req.updated)
 			}
-		case <-refresher.C():
+		case <-refresherChan:
 			stateChanged = true
 		case <-ticker.C():
 			if !stateChanged {
@@ -324,14 +336,16 @@ stop:
 			// to avoid introducing unnecessary churn in case a full reconciliation was already
 			// triggered due to other reasons. The Stop and select steps can be dropped once
 			// switching to using go v1.23: https://go.dev/wiki/Go123Timer
-			if !refresher.Stop() {
-				select {
-				case <-ticker.C():
-				default:
+			// Only reset if periodic reconciliation is enabled (interval > 0).
+			if refresher != nil && fullReconciliationInterval > 0 {
+				if !refresher.Stop() {
+					select {
+					case <-ticker.C():
+					default:
+					}
 				}
+				refresher.Reset(fullReconciliationInterval)
 			}
-
-			refresher.Reset(fullReconciliationInterval)
 		}
 	}
 

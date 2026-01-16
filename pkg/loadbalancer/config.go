@@ -210,6 +210,11 @@ type UserConfig struct {
 	// thus may need to first reconcile the Kubernetes services to connect to ClusterMesh (if endpoints have changed
 	// while agent was down).
 	InitWaitTimeout time.Duration `mapstructure:"lb-init-wait-timeout"`
+
+	// ReconciliationInterval is the interval between consecutive pruning operations
+	// to ensure eventual consistency and correct possible divergences.
+	// A value of 0 disables periodic reconciliation/pruning.
+	ReconciliationInterval time.Duration `mapstructure:"lb-reconciliation-interval"`
 }
 
 // ConfigCell provides the [Config] and [ExternalConfig] configurations.
@@ -320,6 +325,9 @@ func (def UserConfig) Flags(flags *pflag.FlagSet) {
 
 	flags.Duration("lb-init-wait-timeout", def.InitWaitTimeout, "Amount of time to wait for initialization before reconciling BPF maps")
 	flags.MarkHidden("lb-init-wait-timeout")
+
+	flags.Duration("lb-reconciliation-interval", def.ReconciliationInterval, "Interval between consecutive loadbalancer pruning operations. 0 disables periodic reconciliation.")
+	flags.MarkHidden("lb-reconciliation-interval")
 }
 
 // NewConfig takes the user-provided configuration, validates and processes it to produce the final
@@ -490,7 +498,8 @@ var DefaultUserConfig = UserConfig{
 
 	EnableServiceTopology: false,
 
-	InitWaitTimeout: 1 * time.Minute,
+	InitWaitTimeout:        1 * time.Minute,
+	ReconciliationInterval: 0, // Disabled by default (0 means disabled)
 }
 
 var DefaultConfig = Config{

@@ -76,7 +76,7 @@ func newBPFReconciler(p reconciler.Params, g job.Group, cfg loadbalancer.Config,
 		),
 
 		reconciler.WithPruning(
-			30*time.Minute,
+			cfg.ReconciliationInterval,
 		),
 	)
 
