@@ -499,7 +499,7 @@ var DefaultUserConfig = UserConfig{
 	EnableServiceTopology: false,
 
 	InitWaitTimeout:        1 * time.Minute,
-	ReconciliationInterval: 0, // Disabled by default (0 means disabled)
+	ReconciliationInterval: 10 * time.Minute,
 }
 
 var DefaultConfig = Config{

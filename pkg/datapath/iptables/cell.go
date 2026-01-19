@@ -79,7 +79,7 @@ var defaultConfig = Config{
 	DisableIptablesFeederRules: []string{},
 	IPTablesRandomFully:        false,
 	EnableXTSocketFallback:     true,
-	ReconciliationInterval:     0, // Disabled by default (0 means disabled)
+	ReconciliationInterval:     10 * time.Minute,
 }
 
 func (def Config) Flags(flags *pflag.FlagSet) {
