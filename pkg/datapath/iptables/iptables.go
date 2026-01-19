@@ -356,6 +356,9 @@ func newIptablesManager(p params) datapath.IptablesManager {
 				return nil
 			case <-iptMgr.argsInit.WaitChannel():
 			}
+			p.Logger.Info("DEBUG: Starting iptables reconciliation loop",
+				"reconciliation_interval", p.Cfg.ReconciliationInterval,
+				"enabled", p.Cfg.ReconciliationInterval > 0)
 			return reconciliationLoop(
 				ctx, p.Logger, health,
 				iptMgr.sharedCfg.InstallIptRules, &iptMgr.reconcilerParams,

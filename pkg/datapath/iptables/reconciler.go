@@ -132,6 +132,9 @@ func reconciliationLoop(
 	// and correct possible divergences.
 	// A value of 0 means periodic reconciliation is disabled.
 	fullReconciliationInterval := reconciliationInterval
+	log.Info("DEBUG: iptables reconciliation interval configured",
+		"interval", fullReconciliationInterval,
+		"enabled", fullReconciliationInterval > 0)
 
 	// log limiter for partial (proxy and no track rules) reconciliation errors
 	partialLogLimiter := logging.NewLimiter(10*time.Second, 3)
@@ -171,10 +174,12 @@ func reconciliationLoop(
 	var refresher clock.Timer
 	var refresherChan <-chan time.Time
 	if fullReconciliationInterval > 0 {
+		log.Info("DEBUG: Creating iptables periodic reconciliation timer", "interval", fullReconciliationInterval)
 		refresher = params.clock.NewTimer(fullReconciliationInterval)
 		defer refresher.Stop()
 		refresherChan = refresher.C()
 	} else {
+		log.Info("DEBUG: iptables periodic reconciliation disabled (interval is 0), no timer created")
 		// Use a nil channel which never fires when periodic reconciliation is disabled
 		refresherChan = nil
 	}
@@ -306,12 +311,9 @@ stop:
 				close(req.updated)
 			}
 		case <-refresherChan:
+			log.Info("DEBUG: iptables periodic reconciliation timer fired, triggering reconciliation")
 			stateChanged = true
 		case <-ticker.C():
-			// DEBUG: Return immediately to prevent any reconciliation
-			log.Info("DEBUG: Exiting reconciliation loop immediately (no reconciliation)")
-			return nil
-
 			if !stateChanged {
 				continue
 			}
@@ -348,6 +350,7 @@ stop:
 					default:
 					}
 				}
+				log.Info("DEBUG: Resetting iptables periodic reconciliation timer", "interval", fullReconciliationInterval)
 				refresher.Reset(fullReconciliationInterval)
 			}
 		}
