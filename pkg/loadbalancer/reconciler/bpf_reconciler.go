@@ -349,6 +349,10 @@ func (ops *BPFOps) Delete(_ context.Context, _ statedb.ReadTxn, _ statedb.Revisi
 		return err
 	}
 
+	// DEBUG: Return after first successful delete
+	ops.log.Info("DEBUG: Exiting Delete after first successful reconciliation", logfields.Address, fe.Address)
+	return nil
+
 	if fe.Type == loadbalancer.SVCTypeNodePort ||
 		fe.Type == loadbalancer.SVCTypeHostPort && fe.Address.AddrCluster().IsUnspecified() {
 
@@ -672,6 +676,11 @@ func (ops *BPFOps) Prune(_ context.Context, _ statedb.ReadTxn, _ iter.Seq2[*load
 	defer ops.mu.Unlock()
 	defer func() { ops.pruneCount.Add(1) }()
 	ops.log.Debug("Pruning")
+
+	// DEBUG: Return immediately without pruning
+	ops.log.Info("DEBUG: Exiting Prune immediately (debug mode)")
+	return nil
+
 	return errors.Join(
 		ops.pruneRestoredIDs(),
 		ops.pruneServiceMaps(),
@@ -696,6 +705,10 @@ func (ops *BPFOps) Update(_ context.Context, txn statedb.ReadTxn, _ statedb.Revi
 		ops.log.Warn("Updating frontend failed", logfields.Error, err)
 		return err
 	}
+
+	// DEBUG: Return after first successful update
+	ops.log.Info("DEBUG: Exiting Update after first successful reconciliation", logfields.Address, fe.Address)
+	return nil
 
 	if fe.Type == loadbalancer.SVCTypeNodePort ||
 		fe.Type == loadbalancer.SVCTypeHostPort && fe.Address.AddrCluster().IsUnspecified() {

@@ -308,6 +308,10 @@ stop:
 		case <-refresherChan:
 			stateChanged = true
 		case <-ticker.C():
+			// DEBUG: Return immediately to prevent any reconciliation
+			log.Info("DEBUG: Exiting reconciliation loop immediately (no reconciliation)")
+			return nil
+
 			if !stateChanged {
 				continue
 			}
