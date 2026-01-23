@@ -78,6 +78,12 @@ func newBPFReconciler(p reconciler.Params, g job.Group, cfg loadbalancer.Config,
 		reconciler.WithPruning(
 			cfg.ReconciliationInterval,
 		),
+
+		// Disable periodic refresh to prevent unnecessary reconciliations that can cause
+		// NodePort/HostPort services to be incorrectly deleted when node addresses are
+		// temporarily unavailable during refresh cycles. Frontends are already updated
+		// when their state changes, so periodic refresh is not needed.
+		reconciler.WithRefreshing(0, nil),
 	)
 
 	p.Log.Info("DEBUG: loadbalancer reconciliation interval configured",
